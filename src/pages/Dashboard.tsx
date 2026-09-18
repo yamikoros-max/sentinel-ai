@@ -49,6 +49,7 @@ import {
   Landmark,
   LogOut,
   Radio,
+  LockOpen,
   ScrollText,
   Settings2,
   ShieldAlert,
@@ -135,6 +136,8 @@ interface LiveSessionRow {
   coldStart: boolean;
   memo: string | null;
   memoState?: "pending" | "ready" | "failed";
+  userBlocked?: boolean;
+  blockSource?: "manual" | "auto" | null;
   ip: string;
   city: string;
   country: string;
@@ -253,7 +256,8 @@ export default function Dashboard() {
 
   const recordCase = useMutation(api.sentinel.recordCase);
   const blockUser = useMutation(api.sentinel.blockUser);
-  const blockLiveUser = useMutation(api.orgs.blockLiveUser);
+  const unblockCase = useMutation(api.sentinel.unblockCase);
+  const setUserBlocked = useMutation(api.orgs.setUserBlocked);
   const markReviewed = useMutation(api.sentinel.markReviewed);
   const markLiveReviewed = useMutation(api.orgs.markLiveReviewed);
   const explainCase = useAction(api.sentinel.explainCase);
@@ -289,21 +293,51 @@ export default function Dashboard() {
   const liveModeActive = isLive && dossier !== undefined;
   const liveRole: "admin" | "member" | null =
     isLive ? (liveDossier?.role ?? liveSessions?.[0]?.role ?? null) : null;
+  // Current blocked state of the selected account (live override list or demo case stamp).
+  const isBlockedNow = isLive
+    ? (liveDossier?.userBlocked ?? false)
+    : (caseFor?.blocked ?? false);
 
   const handleBlock = async () => {
     if (!dossier) return;
     setBlockOpen(false);
     try {
       if (liveModeActive) {
-        await blockLiveUser({ sessionId: dossier.sessionId } as never);
+        await setUserBlocked({
+          orgId: activeOrgId as never,
+          user: (liveDossier?.user ?? dossier.user) as never,
+          userLabel: dossier.user,
+          blocked: true,
+          reason: `Blocked manually from the dossier of session ${dossier.sessionId}.`,
+        } as never);
       } else {
         await blockUser({ sessionId: dossier.sessionId, user: dossier.user });
       }
       toast("Account blocked", {
-        description: `${dossier.user} has been revoked and the SOC has been alerted.`,
+        description: `${dossier.user} is blocked org-wide — future sessions will be denied until unblocked.`,
       });
     } catch {
       toast.error("Could not stamp the block — try again.");
+    }
+  };
+
+  const handleUnblock = async () => {
+    if (!dossier) return;
+    try {
+      if (liveModeActive) {
+        await setUserBlocked({
+          orgId: activeOrgId as never,
+          user: (liveDossier?.user ?? dossier.user) as never,
+          blocked: false,
+        } as never);
+      } else {
+        await unblockCase({ sessionId: dossier.sessionId });
+      }
+      toast("Account unblocked", {
+        description: `${dossier.user} can sign in again — the engine keeps monitoring.`,
+      });
+    } catch {
+      toast.error("Could not unblock — try again.");
     }
   };
 
@@ -590,9 +624,11 @@ export default function Dashboard() {
                       <h2 className="font-serif text-2xl font-bold">
                         {dossier.user}
                       </h2>
-                      {caseFor?.blocked ? (
+                      {isBlockedNow ? (
                         <span className="stamp border-destructive px-2 py-1 text-xs font-bold text-destructive">
-                          Blocked
+                          {isLive && liveDossier?.blockSource === "auto"
+                            ? "Auto-Blocked"
+                            : "Blocked"}
                         </span>
                       ) : caseFor?.reviewed ? (
                         <span className="stamp border-chart-1 px-2 py-1 text-xs font-bold text-chart-1">
@@ -779,8 +815,8 @@ export default function Dashboard() {
 
               {/* AI memo + actions */}
               <MemoCard
-                memo={caseFor?.memo ?? null}
-                memoState={caseFor?.memoState}
+                memo={isLive ? (liveDossier?.memo ?? null) : (caseFor?.memo ?? null)}
+                memoState={isLive ? liveDossier?.memoState : caseFor?.memoState}
                 onSummon={handleSummon}
               />
 
@@ -790,37 +826,49 @@ export default function Dashboard() {
                     {caseFor?.dispatched || dispatchNote(dossier.verdict)}
                   </p>
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={handleReview} disabled={caseFor?.reviewed}>
+                    <Button variant="outline" size="sm" onClick={handleReview} disabled={caseFor?.reviewed && !isLive}>
                       Mark Reviewed
                     </Button>
-                    <AlertDialog open={blockOpen} onOpenChange={setBlockOpen}>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="destructive" size="sm" disabled={caseFor?.blocked}>
-                          Block User
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent className="texture-paper bg-card">
-                        <AlertDialogHeader>
-                          <AlertDialogTitle className="font-serif">
-                            Stamp the case file “Blocked”?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            {dossier.user} will be revoked across all services and
-                            the SOC will be paged immediately. This action is
-                            recorded in the archive.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={handleBlock}
-                            className="bg-destructive text-white hover:bg-destructive/90"
-                          >
+                    {isBlockedNow ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleUnblock}
+                        className="gap-2 border-chart-1/50 text-chart-1 hover:bg-chart-1/10"
+                      >
+                        <LockOpen className="size-3.5" />
+                        Unblock User
+                      </Button>
+                    ) : (
+                      <AlertDialog open={blockOpen} onOpenChange={setBlockOpen}>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="destructive" size="sm">
                             Block User
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent className="texture-paper bg-card">
+                          <AlertDialogHeader>
+                            <AlertDialogTitle className="font-serif">
+                              Stamp the case file “Blocked”?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {dossier.user} will be blocked org-wide: every future
+                              session scores as “block” until an admin unblocks them,
+                              regardless of the engine's verdict. Recorded in the archive.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={handleBlock}
+                              className="bg-destructive text-white hover:bg-destructive/90"
+                            >
+                              Block User
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
                   </div>
                 </CardContent>
               </Card>

@@ -15,7 +15,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { Check, Copy, KeyRound, Loader2, Radio, Users } from "lucide-react";
+import { Ban, Check, Copy, KeyRound, Loader2, LockOpen, Radio, Users } from "lucide-react";
 
 interface OrgOverview {
   orgId: string;
@@ -25,6 +25,14 @@ interface OrgOverview {
   members: { email: string; role: string; createdAt: number }[];
   keyCount: number;
   keyPreview: string | null;
+}
+
+interface BlockedUserRow {
+  user: string;
+  userLabel: string | null;
+  reason: string;
+  source: "manual" | "auto";
+  blockedAt: number;
 }
 
 interface TestResult {
@@ -42,8 +50,16 @@ export default function OrgSettings({ orgId }: { orgId: string }) {
   const overview = useQuery(api.orgs.orgOverview, { orgId } as never) as
     | OrgOverview
     | undefined;
+  const blockedUsers = useQuery(api.orgs.listBlockedUsers, { orgId } as never) as
+    | BlockedUserRow[]
+    | undefined;
   const createKey = useMutation(api.orgs.createIngestKey);
   const sendTest = useMutation(api.orgs.sendTestEvent);
+  const setUserBlocked = useMutation(api.orgs.setUserBlocked);
+
+  const [manualUser, setManualUser] = useState("");
+  const [manualReason, setManualReason] = useState("");
+  const [busyBlocking, setBusyBlocking] = useState<string | null>(null);
 
   const [mintedKey, setMintedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState<"key" | "snippet" | null>(null);

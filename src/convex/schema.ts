@@ -155,6 +155,21 @@ const schema = defineSchema(
       /** Set for cases originating from a live tenant org. */
       orgId: v.optional(v.id("organizations")),
     }).index("by_session", ["sessionId"]),
+
+    // Manually-blocked user accounts, per org. A row here overrides the
+    // engine: auto-scoring still runs, but blocked users are reported as
+    // blocked until an admin unblocks them.
+    sentinelBlockedUsers: defineTable({
+      orgId: v.id("organizations"),
+      user: v.string(), // ingestion-side user id
+      userLabel: v.optional(v.string()),
+      reason: v.string(),
+      source: v.union(v.literal("manual"), v.literal("auto")),
+      blockedByUserId: v.id("users"),
+      blockedAt: v.number(),
+    })
+      .index("by_org_user", ["orgId", "user"])
+      .index("by_org", ["orgId"]),
   },
   {
     schemaValidation: false,

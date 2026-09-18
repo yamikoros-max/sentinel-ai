@@ -184,6 +184,38 @@ export const blockUser = mutation({
   },
 });
 
+/** Analyst pressed "Unblock" — clears the block stamp on a demo case. */
+export const unblockCase = mutation({
+  args: { sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("sentinelCases")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        blocked: false,
+        reviewed: false,
+        dispatched: "Unblocked manually by the analyst on duty — monitoring continues.",
+      });
+      return existing._id;
+    }
+    return ctx.db.insert("sentinelCases", {
+      sessionId: args.sessionId,
+      user: "unknown",
+      ts: 0,
+      score: 0,
+      verdict: "allow",
+      headline: "Unblocked by analyst",
+      anomalyVote: 0,
+      dispatched: "Unblocked manually by the analyst on duty — monitoring continues.",
+      factors: [],
+      reviewed: false,
+      blocked: false,
+    });
+  },
+});
+
 /** Analyst pressed "Mark Reviewed" — closes the case without blocking. */
 export const markReviewed = mutation({
   args: { sessionId: v.string() },

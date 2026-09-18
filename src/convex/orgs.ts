@@ -263,8 +263,18 @@ export async function scoreAndStoreEvent(
   ctx: any,
   orgId: any,
   event: IngestEvent,
-): Promise<{ sessionId: string; score: number; verdict: string; coldStart: boolean }> {
+): Promise<{ sessionId: string; score: number; verdict: string; coldStart: boolean; userBlocked: boolean }> {
   const now = event.ts ?? Date.now();
+
+  // Admin override: a manually blocked user is always reported as blocked,
+  // whatever the engine thinks of this particular session.
+  const blockRow = await ctx.db
+    .query("sentinelBlockedUsers")
+    .withIndex("by_org_user", (q: any) =>
+      q.eq("orgId", orgId).eq("user", event.user),
+    )
+    .first();
+  const userBlocked = blockRow !== null;
 
   // 1. Gather this user's benign history within the org.
   const historyRows = await ctx.db
@@ -308,6 +318,10 @@ export async function scoreAndStoreEvent(
     : null;
   const risk = scoreSession(session, prev, detector);
   const coldStart = detector.forest === null;
+  if (userBlocked) {
+    risk.verdict = "block";
+    risk.headline = "Blocked by analyst (manual override)";
+  }
 
   // 4. Persist with role-based redaction baked in.
   const sessionId = await ctx.db.insert("sentinelLiveSessions", {
@@ -347,7 +361,7 @@ export async function scoreAndStoreEvent(
     coldStart,
   });
 
-  return { sessionId, score: risk.score, verdict: risk.verdict, coldStart };
+  return { sessionId, score: risk.score, verdict: risk.verdict, coldStart, userBlocked };
 }
 
 /** Convert a stored live-session row into an engine SessionLog. */
@@ -393,6 +407,11 @@ export const listLiveSessions = query({
       .withIndex("by_org_ts", (q) => q.eq("orgId", args.orgId))
       .order("desc")
       .take(300);
+    const blockedRows = await ctx.db
+      .query("sentinelBlockedUsers")
+      .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
+      .collect();
+    const blockedSet = new Set(blockedRows.map((b) => b.user));
 
     return rows.map((r) => ({
       sessionId: r._id,
@@ -410,6 +429,7 @@ export const listLiveSessions = query({
       coldStart: r.coldStart,
       memo: r.memo ?? null,
       memoState: r.memoState,
+      userBlocked: blockedSet.has(r.user),
       // Redaction boundary: only admins receive location, device, IP and
       // resource names. Members get masked values.
       ...(isAdmin
@@ -453,6 +473,12 @@ export const getLiveSession = query({
       .first();
     if (!membership || membership.orgId !== r.orgId) return null;
     const isAdmin = membership.role === "admin";
+    const blockRow = await ctx.db
+      .query("sentinelBlockedUsers")
+      .withIndex("by_org_user", (q) =>
+        q.eq("orgId", r.orgId).eq("user", r.user),
+      )
+      .first();
 
     return {
       sessionId: r._id,
@@ -470,6 +496,8 @@ export const getLiveSession = query({
       coldStart: r.coldStart,
       memo: r.memo ?? null,
       memoState: r.memoState,
+      userBlocked: blockRow !== null,
+      blockSource: blockRow?.source ?? null,
       ...(isAdmin
         ? {
             ip: r.ip ?? "0.0.0.0",
@@ -580,6 +608,118 @@ export const patchLiveMemoState = mutation({
   handler: async (ctx, args) => {
     await ctx.db.patch(args.sessionId, { memoState: args.memoState });
     return { ok: true };
+  },
+});
+
+// ── Manual block / unblock (admin override) ──────────────────
+
+/**
+ * Manually block or unblock a user account, org-wide. This is the analyst's
+ * override: a manual block stands regardless of what the engine scores, and a
+ * manual unblock stands regardless of what the engine recommends — until the
+ * admin changes their mind.
+ */
+export const setUserBlocked = mutation({
+  args: {
+    orgId: v.id("organizations"),
+    user: v.string(),
+    userLabel: v.optional(v.string()),
+    blocked: v.boolean(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) throw new Error("Sign in required.");
+    const membership = await ctx.db
+      .query("orgMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (!membership || membership.orgId !== args.orgId || membership.role !== "admin") {
+      throw new Error("Only domain admins can block or unblock accounts.");
+    }
+
+    const existing = await ctx.db
+      .query("sentinelBlockedUsers")
+      .withIndex("by_org_user", (q) =>
+        q.eq("orgId", args.orgId).eq("user", args.user),
+      )
+      .first();
+
+    if (args.blocked) {
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          reason: args.reason ?? existing.reason,
+          userLabel: args.userLabel ?? existing.userLabel,
+          blockedAt: Date.now(),
+        });
+      } else {
+        await ctx.db.insert("sentinelBlockedUsers", {
+          orgId: args.orgId,
+          user: args.user,           
+          userLabel: args.userLabel,
+          reason: args.reason ?? "Blocked manually by the analyst on duty.",
+          source: "manual",
+          blockedByUserId: userId,
+          blockedAt: Date.now(),
+        });
+      }
+      // Stamp the newest live session so the ledger reflects the state.
+      const latest = await ctx.db
+        .query("sentinelLiveSessions")
+        .withIndex("by_org_user", (q) =>
+          q.eq("orgId", args.orgId).eq("user", args.user),
+        )
+        .order("desc")
+        .first();
+      if (latest) {
+        await ctx.db.patch(latest._id, {
+          verdict: "block",
+          headline: "Blocked by analyst (manual)",
+        });
+      }
+    } else {
+      if (existing) await ctx.db.delete(existing._id);
+      // Clear the stamp from the newest session.
+      const latest = await ctx.db
+        .query("sentinelLiveSessions")
+      .withIndex("by_org_user", (q) =>
+          q.eq("orgId", args.orgId).eq("user", args.user),
+        )
+        .order("desc")
+        .first();
+      if (latest && latest.headline === "Blocked by analyst (manual)") {
+        await ctx.db.patch(latest._id, {
+          verdict: "allow",
+          headline: "Unblocked by analyst — monitoring continues",
+        });
+      }
+    }
+    return { ok: true };
+  },
+});
+
+/** Block list for the org — visible to all members (not sensitive detail). */
+export const listBlockedUsers = query({
+  args: { orgId: v.id("organizations") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) return null;
+    const membership = await ctx.db
+      .query("orgMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (!membership || membership.orgId !== args.orgId) return null;
+    const rows = await ctx.db
+      .query("sentinelBlockedUsers")
+      .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
+      .collect();
+    return rows.map((r) => ({
+      user: r.user,
+      userLabel: r.userLabel ?? null,
+      reason: r.reason,
+      source: r.source,
+      blockedAt: r.blockedAt,
+    }));
   },
 });
 
