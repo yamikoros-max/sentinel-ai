@@ -31,6 +31,15 @@ import {
 import { RiskDial } from "@/components/sentinel/RiskDial";
 import { SessionTimeline } from "@/components/sentinel/SessionTimeline";
 import { MemoCard } from "@/components/sentinel/MemoCard";
+import {
+  BureauStats,
+  FactorFrequencyChart,
+  HourHeatmap,
+  LiveTicker,
+  RiskTrendChart,
+  SessionRadar,
+  VerdictDonut,
+} from "@/components/sentinel/StatPanels";
 import OrgSettings from "@/pages/OrgSettings";
 import { cn } from "@/lib/utils";
 import {
@@ -50,11 +59,13 @@ import {
   LogOut,
   Radio,
   LockOpen,
+  Search,
   ScrollText,
   Settings2,
   ShieldAlert,
   ShieldCheck,
   Timer,
+  X,
 } from "lucide-react";
 
 interface SessionSummary {
@@ -288,6 +299,40 @@ export default function Dashboard() {
     () => (sessions ? [...sessions].sort((a, b) => b.score - a.score) : []),
     [sessions],
   );
+
+  // ── Interactive stats state ─────────────────────────────────
+  const [hourFilter, setHourFilter] = useState<number | null>(null);
+  const [riskFilter, setRiskFilter] = useState<number | null>(null); // min score
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    let list = sorted;
+    if (hourFilter !== null) {
+      list = list.filter((s) => new Date(s.ts).getUTCHours() === hourFilter);
+    }
+    if (riskFilter !== null) list = list.filter((s) => s.score >= riskFilter);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (s) =>
+          s.user.toLowerCase().includes(q) ||
+          s.city.toLowerCase().includes(q) ||
+          s.headline.toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [sorted, hourFilter, riskFilter, search]);
+
+  const statFactorSets = useMemo(
+    () =>
+      (isLive ? (liveSessions ?? []) : (demoSessions ?? [])).map((r) =>
+        "factors" in r
+          ? (r as { factors: { code: string; label: string; weight: number }[] }).factors
+          : [],
+      ),
+    [isLive, liveSessions, demoSessions],
+  );
+  const hasActiveFilter = hourFilter !== null || riskFilter !== null || search.trim() !== "";
   const caseFor = allCases?.find((c) => c.sessionId === selectedId);
   const vs = dossier ? verdictStyle(dossier.verdict) : null;
   const liveModeActive = isLive && dossier !== undefined;
@@ -515,11 +560,18 @@ export default function Dashboard() {
             </p>
           )}
         </div>
+        {/* ── Live signals ticker ─────────────────────────────── */}
+        {sessions && sessions.length > 0 && <LiveTicker sessions={sessions} />}
+
+        {/* ── Animated bureau counters ─────────────────────────── */}
+        <BureauStats sessions={sessions ?? []} />
+
+        {/* ── Watchlist strip ────────────────────────────────────── */}
         <section className="mb-6 grid gap-3 sm:grid-cols-3">
           {(watchlist ?? []).map((w) => (
             <Card
               key={w.user}
-              className="texture-paper border-border/70 bg-card/80 py-3"
+              className="texture-paper border-border/70 bg-card/80 py-3 transition-all hover:border-primary/40"
             >
               <CardContent className="flex items-center justify-between gap-3 px-4">
                 <div>
@@ -541,6 +593,22 @@ export default function Dashboard() {
           ))}
         </section>
 
+        {/* ── Chart row: donut + risk trend ───────────────────── */}
+        <div className="mb-6 grid gap-6 xl:grid-cols-[340px_1fr]">
+          <VerdictDonut sessions={sessions ?? []} />
+          <RiskTrendChart sessions={sessions ?? []} />
+        </div>
+
+        {/* ── Chart row: heatmap + factor frequency ───────────── */}
+        <div className="mb-6 grid gap-6 xl:grid-cols-2">
+          <HourHeatmap
+            sessions={sessions ?? []}
+            activeHour={hourFilter}
+            onPickHour={(h) => setHourFilter(hourFilter === h ? null : h)}
+          />
+          <FactorFrequencyChart factorSets={statFactorSets} />
+        </div>
+
         <div className="grid gap-6 lg:grid-cols-[350px_1fr]">
           {/* ── Case ledger ──────────────────────────────────────── */}
           <Card className="texture-paper deckle border-border bg-card/85">
@@ -550,13 +618,75 @@ export default function Dashboard() {
                 Case Ledger
               </CardTitle>
               <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                {sorted.length} sessions · sorted by risk
+                {filtered.length} of {sorted.length} sessions · sorted by risk
               </p>
+              <div className="mt-2 space-y-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search user, city, headline…"
+                    className="h-8 w-full rounded-sm border border-input bg-background/60 pl-8 pr-3 font-mono text-xs text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {([30, 60, 80] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setRiskFilter(riskFilter === t ? null : t)}
+                      className={cn(
+                        "rounded-sm border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                        riskFilter === t
+                          ? "border-primary bg-primary/15 text-primary"
+                          : "border-border/60 text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      ≥{t} risk
+                    </button>
+                  ))}
+                  {hasActiveFilter && (
+                    <button
+                      onClick={() => {
+                        setHourFilter(null);
+                        setRiskFilter(null);
+                        setSearch("");
+                      }}
+                      className="ml-auto flex items-center gap-1 rounded-sm border border-destructive/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-destructive hover:bg-destructive/10"
+                    >
+                      <X className="size-3" />
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {hourFilter !== null && (
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-primary">
+                    Hour filter: {String(hourFilter).padStart(2, "0")}:00 UTC — from the heatmap
+                  </p>
+                )}
+ </div>
             </CardHeader>
             <Separator />
             <ScrollArea className="h-[560px]">
               <div className="divide-y divide-border/50">
-                {sorted.map((s) => {
+                {filtered.length === 0 && (
+                  <div className="px-4 py-10 text-center">
+                    <p className="font-serif text-sm italic text-muted-foreground">
+                      No sessions match the current filters.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setHourFilter(null);
+                        setRiskFilter(null);
+                        setSearch("");
+                      }}
+                      className="mt-2 font-mono text-[10px] uppercase tracking-widest text-primary underline underline-offset-4"
+                    >
+                      Clear all filters
+                    </button>
+                    </div>
+                )}
+                {filtered.map((s) => {
                   const st = verdictStyle(s.verdict);
                   const active = s.sessionId === selectedId;
                   return (
@@ -771,6 +901,17 @@ export default function Dashboard() {
                       <Metric label="Downloads" value={dossier.downloads.toLocaleString()} vs={`ceiling ${dossier.baseline.downloadsMax}`} />
                       <Metric label="API calls" value={dossier.apiCalls.toLocaleString()} vs={`ceiling ${dossier.baseline.apiCallsMax.toLocaleString()}`} />
                       <Metric label="Uploads" value={String(dossier.uploads)} vs="usual 0–4" />
+                      <div className="col-span-3 h-48">
+                        <SessionRadar
+                          downloads={dossier.downloads}
+                          downloadsCeiling={dossier.baseline.downloadsMax}
+                          apiCalls={dossier.apiCalls}
+                          apiCeiling={dossier.baseline.apiCallsMax}
+                          uploads={dossier.uploads}
+                          anomalyVote={dossier.anomalyVote}
+                          factorWeight={dossier.factors.reduce((a, f) => a + f.weight, 0)}
+                        />
+                      </div>
                       <div className="col-span-3 space-y-1 pt-1 text-left">
                         {dossier.sensitiveResources.length > 0 && (
                           <p className="font-mono text-[11px] text-muted-foreground">

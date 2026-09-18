@@ -61,6 +61,19 @@ export function scoreColorHex(score: number): string {
   return "#8e3b2f";
 }
 
+export function verdictColorHex(v: Verdict): string {
+  switch (v) {
+    case "allow":
+      return "#6b8f71";
+    case "monitor":
+      return "#b08d3e";
+    case "challenge":
+      return "#8a5a2b";
+    case "block":
+      return "#8e3b2f";
+  }
+}
+
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
