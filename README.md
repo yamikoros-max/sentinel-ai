@@ -1,272 +1,222 @@
-## Overview
+# 🛡️ SentinelAI — Open Behavioral Security for Your Domain
 
-This project uses the following tech stack:
-- Vite
-- Typescript
-- React Router v7 (all imports from `react-router` instead of `react-router-dom`)
-- React 19 (for frontend components)
-- Tailwind v4 (for styling)
-- Shadcn UI (for UI components library)
-- Lucide Icons (for icons)
-- Convex (for backend & database)
-- Convex Auth (for authentication)
-- Framer Motion (for animations)
-- Three js (for 3d models)
+**SentinelAI** is an open-source behavioral security system that detects when a
+legitimate user account is being misused — even when the attacker has the
+correct username, password, and OTP.
 
-All relevant files live in the 'src' directory.
+Instead of only checking credentials, SentinelAI learns how each user normally
+behaves (login hours, devices, networks, geography, file volumes, API rhythm,
+resources touched) and scores every new session against that private archive
+with an **Isolation Forest ensemble + rule-evidence engine**, returning a
+0–100 risk score and a verdict your systems can act on:
 
-Use bun for the package manager.
+| Risk | Verdict | Action |
+| ---- | ----------------- | ------------------------------ |
+| 0–29 | `allow` | Behavior matches the archive |
+| 30–59 | `monitor` | Watch quietly, no friction |
+| 60–79 | `challenge` | Step-up MFA verification |
+| 80–100 | `block` | Freeze account, alert the SOC |
 
-## Setup
+An optional **LLM Security Analyst** (OpenAI `gpt-4o-mini`) converts the
+technical dossier into a plain-language incident memo for non-technical
+reviewers.
 
-This project is set up already and running on a cloud environment, as well as a convex development in the sandbox.
+---
 
-## Environment Variables
+## ✨ Multi-tenant by design
 
-The project is set up with project specific CONVEX_DEPLOYMENT and VITE_CONVEX_URL environment variables on the client side.
+- **One organization per email domain.** Claim your domain with a work email
+  (`you@acme.com` → org `acme.com`); you become the domain **admin**.
+  Colleagues who sign up with the same email domain join automatically as
+  **members**.
+- **Role-based redaction.** Admins see full session detail — IPs, devices,
+  locations, resource names, raw log lines. Members get a redacted view
+  (`•.•.•.•`, `redacted`). The redaction is enforced **server-side**, in the
+  query layer — members never receive the sensitive fields over the wire.
+- **Hashed ingest keys.** API keys (`sai_…`) are shown once at mint time and
+  stored only as SHA-256 hashes.
+- **Live ingestion.** Stream session events to `POST /api/ingest` and get an
+  immediate verdict back, so your gateway/SSO can act in real time.
+- **Cold-start safe.** New users with thin history are scored evidence-only and
+  **never auto-blocked** (verdict capped at `monitor`) until enough benign
+  history exists to trust the ensemble.
 
-The convex server has a separate set of environment variables that are accessible by the convex backend.
+---
 
-Currently, these variables include auth-specific keys: JWKS, JWT_PRIVATE_KEY, and SITE_URL.
+## 🚀 Quick start (self-hosting)
 
-
-# Using Authentication (Important!)
-
-You must follow these conventions when using authentication.
-
-## Auth is already set up.
-
-All convex authentication functions are already set up. The auth currently uses email OTP and anonymous users, but can support more.
-
-The email OTP configuration is defined in `src/convex/auth/emailOtp.ts`. DO NOT MODIFY THIS FILE.
-
-Also, DO NOT MODIFY THESE AUTH FILES: `src/convex/auth.config.ts` and `src/convex/auth.ts`.
-
-## Using Convex Auth on the backend
-
-On the `src/convex/users.ts` file, you can use the `getCurrentUser` function to get the current user's data.
-
-## Using Convex Auth on the frontend
-
-The `/auth` page is already set up to use auth. Navigate to `/auth` for all log in / sign up sequences.
-
-You MUST use this hook to get user data. Never do this yourself without the hook:
-```typescript
-import { useAuth } from "@/hooks/use-auth";
-
-const { isLoading, isAuthenticated, user, signIn, signOut } = useAuth();
+```bash
+bun install
+bun convex dev --once   # generate backend types + push schema
+bun run dev             # start the app
 ```
 
-## Protected Routes
+Sign in, then open **`/onboarding`** to claim your organization's domain.
 
-The starter `/dashboard` route is protected with `RequireAuth`, which sends
-signed-out users to `/auth?returnTo=<current route>`. Extend that page for the
-product's authenticated experience, and reuse `RequireAuth` when adding another
-protected route.
+### Mint an ingest key
 
-## Auth Page
+1. Open the Watch Room → **Domain** (settings).
+2. Click **Mint new key** — copy it immediately (shown once).
+3. Use the copied snippet or the example below.
 
-The auth page is defined in `src/pages/Auth.tsx`. Send sign-in and sign-up actions
-to `/auth`.
+### Stream a session event
 
-## Authorization
-
-You can perform authorization checks on the frontend and backend.
-
-On the frontend, you can use the `useAuth` hook to get the current user's data and authentication state.
-
-You should also be protecting queries, mutations, and actions at the base level, checking for authorization securely.
-
-## Adding a redirect after auth
-
-The `/auth` route in `src/main.tsx` redirects to `/dashboard` by default. If the
-product's main authenticated route is different, update `redirectAfterAuth` to
-that route. A validated same-origin `returnTo` query parameter takes priority so
-users can resume the protected page they originally requested. Never leave an
-authenticated product redirecting back to the public landing page.
-
-## Complete authenticated products
-
-When the requested product implies accounts, a workspace, a dashboard, or other
-signed-in functionality, the task is not complete with only a landing page and
-auth form. Build the main authenticated experience, protect its route, and verify
-that signing in reaches it.
-
-# Frontend Conventions
-
-You will be using the Vite frontend with React 19, Tailwind v4, and Shadcn UI.
-
-Generally, pages should be in the `src/pages` folder, and components should be in the `src/components` folder.
-
-Shadcn primitives are located in the `src/components/ui` folder and should be used by default.
-
-## Page routing
-
-Your page component should go under the `src/pages` folder.
-
-When adding a page, update the react router configuration in `src/main.tsx` to include the new route you just added.
-
-## Shad CN conventions
-
-Follow these conventions when using Shad CN components, which you should use by default.
-- Remember to use "cursor-pointer" to make the element clickable
-- For title text, use the "tracking-tight font-bold" class to make the text more readable
-- Always make apps MOBILE RESPONSIVE. This is important
-- AVOID NESTED CARDS. Try and not to nest cards, borders, components, etc. Nested cards add clutter and make the app look messy.
-- AVOID SHADOWS. Avoid adding any shadows to components. stick with a thin border without the shadow.
-- Avoid skeletons; instead, use the loader2 component to show a spinning loading state when loading data.
-
-
-## Landing Pages
-
-You must always create good-looking designer-level styles to your application. 
-- Make it well animated and fit a certain "theme", ie neo brutalist, retro, neumorphism, glass morphism, etc
-
-Use known images and emojis from online.
-
-If the user is logged in already, show the get started button to say "Dashboard" or "Profile" instead to take them there.
-
-## Responsiveness and formatting
-
-Make sure pages are wrapped in a container to prevent the width stretching out on wide screens. Always make sure they are centered aligned and not off-center.
-
-Always make sure that your designs are mobile responsive. Verify the formatting to ensure it has correct max and min widths as well as mobile responsiveness.
-
-- Always create sidebars for protected dashboard pages and navigate between pages
-- Always create navbars for landing pages
-- On these bars, the created logo should be clickable and redirect to the index page
-
-## Animating with Framer Motion
-
-You must add animations to components using Framer Motion. It is already installed and configured in the project.
-
-To use it, import the `motion` component from `framer-motion` and use it to wrap the component you want to animate.
-
-
-### Other Items to animate
-- Fade in and Fade Out
-- Slide in and Slide Out animations
-- Rendering animations
-- Button clicks and UI elements
-
-Animate for all components, including on landing page and app pages.
-
-## Three JS Graphics
-
-Your app comes with three js by default. You can use it to create 3D graphics for landing pages, games, etc.
-
-
-## Colors
-
-You can override colors in: `src/index.css`
-
-This uses the oklch color format for tailwind v4.
-
-Always use these color variable names.
-
-Make sure all ui components are set up to be mobile responsive and compatible with both light and dark mode.
-
-Set theme using `dark` or `light` variables at the parent className.
-
-## Styling and Theming
-
-When changing the theme, always change the underlying theme of the shad cn components app-wide under `src/components/ui` and the colors in the index.css file.
-
-Avoid hardcoding in colors unless necessary for a use case, and properly implement themes through the underlying shad cn ui components.
-
-When styling, ensure buttons and clickable items have pointer-click on them (don't by default).
-
-Always follow a set theme style and ensure it is tuned to the user's liking.
-
-## Toasts
-
-You should always use toasts to display results to the user, such as confirmations, results, errors, etc.
-
-Use the shad cn Sonner component as the toaster. For example:
-
+```bash
+curl -X POST https://YOUR-APP-URL/api/ingest \
+  -H "Authorization: Bearer sai_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user": "u_10293",
+    "ts": 1757900000000,
+    "ip": "203.0.113.9",
+    "city": "Chennai",
+    "country": "India",
+    "lat": 13.08, "lon": 80.27,
+    "device": "MacBook Pro",
+    "browser": "Chrome 139",
+    "fileDownloads": 12,
+    "fileUploads": 1,
+    "apiCalls": 640,
+    "sensitiveResources": [],
+    "privilegedActions": [],
+    "authPassed": ["password", "otp"],
+    "notes": ["login from web app"]
+  }'
 ```
-import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
-export function SonnerDemo() {
-  return (
-    <Button
-      variant="outline"
-      onClick={() =>
-        toast("Event has been created", {
-          description: "Sunday, December 03, 2023 at 9:00 AM",
-          action: {
-            label: "Undo",
-            onClick: () => console.log("Undo"),
-          },
-        })
-      }
-    >
-      Show Toast
-    </Button>
-  )
+Response:
+
+```json
+{
+  "ok": true,
+  "sessionId": "j57…",
+  "score": 96,
+  "verdict": "block",
+  "action": "block",
+  "headline": "Critical — Block + Alert (96/100)",
+  "coldStart": false
 }
 ```
 
-Remember to import { toast } from "sonner". Usage: `toast("Event has been created.")`
+Act on `action` in your own systems: allow the request, force an MFA
+challenge, or deny and page someone.
 
-## Dialogs
+### Fire test events (no code needed)
 
-Always ensure your larger dialogs have a scroll in its content to ensure that its content fits the screen size. Make sure that the content is not cut off from the screen.
+In **Domain → Live Test Console**, an admin can send a scripted *benign pulse*
+or an *attack pulse* (3 a.m. login from Tor, 1,847 downloads, first-time
+payroll access…) through the real scoring pipeline and watch it land in the
+live ledger.
 
-Ideally, instead of using a new page, use a Dialog instead. 
+---
 
-# Using the Convex backend
+## 🧠 How scoring works
 
-You will be implementing the convex backend. Follow your knowledge of convex and the documentation to implement the backend.
-
-## The Convex Schema
-
-You must correctly follow the convex schema implementation.
-
-The schema is defined in `src/convex/schema.ts`.
-
-Do not include the `_id` and `_creationTime` fields in your queries (it is included by default for each table).
-Do not index `_creationTime` as it is indexed for you. Never have duplicate indexes.
-
-
-## Convex Actions: Using CRUD operations
-
-When running anything that involves external connections, you must use a convex action with "use node" at the top of the file.
-
-You cannot have queries or mutations in the same file as a "use node" action file. Thus, you must use pre-built queries and mutations in other files.
-
-You can also use the pre-installed internal crud functions for the database:
-
-```ts
-// in convex/users.ts
-import { crud } from "convex-helpers/server/crud";
-import schema from "./schema.ts";
-
-export const { create, read, update, destroy } = crud(schema, "users");
-
-// in some file, in an action:
-const user = await ctx.runQuery(internal.users.read, { id: userId });
-
-await ctx.runMutation(internal.users.update, {
-  id: userId,
-  patch: {
-    status: "inactive",
-  },
-});
+```
+Session event
+   ↓
+Feature extraction (11 behavioral features)
+   ├── hour-of-day (sin/cos, user's home timezone)
+   ├── device & network novelty
+   ├── geo distance + impossible-travel speed (haversine)
+   ├── download / API ratios vs personal ceilings
+   ├── first-time sensitive resources & privileged commands
+   ↓
+Per-user Isolation Forest (trained on benign history only)
+        + Rule evidence ledger (weighted factors)
+   ↓
+Calibration → 0–100 risk score → verdict dispatch
+   ↓
+LLM Security Analyst memo (optional) → SOC dashboard
 ```
 
+Key properties:
 
-## Common Convex Mistakes To Avoid
+- **One-class learning.** Forests are trained per-user on *benign* history
+  only, so attack sessions never pollute the archive.
+- **Relative anomaly.** Scores are normalized against the worst session in the
+  user's own benign archive, so a quiet user and a power user are judged by
+  their own norms.
+- **Explainable.** Every score ships with a factor ledger: which rules fired,
+  their weights, and the evidence ("03:15 IST vs usual 09:00–19:00",
+  "6,620 km from the prior session with only 10.6 h between logins").
 
-When using convex, make sure:
-- Document IDs are referenced as `_id` field, not `id`.
-- Document ID types are referenced as `Id<"TableName">`, not `string`.
-- Document object types are referenced as `Doc<"TableName">`.
-- Keep schemaValidation to false in the schema file.
-- You must correctly type your code so that it passes the type checker.
-- You must handle null / undefined cases of your convex queries for both frontend and backend, or else it will throw an error that your data could be null or undefined.
-- Always use the `@/folder` path, with `@/convex/folder/file.ts` syntax for importing convex files.
-- This includes importing generated files like `@/convex/_generated/server`, `@/convex/_generated/api`
-- Remember to import functions like useQuery, useMutation, useAction, etc. from `convex/react`
-- NEVER have return type validators.
+Calibrate it yourself:
+
+```bash
+bun run src/lib/sentinel/calibrate.ts
+```
+
+---
+
+## 🔒 Security model
+
+| Layer | Guarantee |
+| --- | --- |
+| Ingest auth | Bearer `sai_…` key → SHA-256 lookup; raw keys never stored |
+| Tenant isolation | Every query/mutation filters by org membership server-side |
+| Detail redaction | Admin-only fields (IP, device, geo, resources, notes) are stripped in the query, not hidden in the UI |
+| Key visibility | Minted key shown exactly once; only hash + preview persisted |
+| Cold start | Thin archives cap verdicts at `monitor` — no false lockouts |
+
+---
+
+## 🗂️ Project layout
+
+```
+src/
+├── convex/
+│   ├── orgs.ts          # orgs, keys, live ingestion, role-aware queries, LLM memo
+│   ├── http.ts          # POST /api/ingest (public, key-authenticated)
+│   ├── sentinel.ts      # demo archive + demo analyst
+│   └── schema.ts        # organizations, orgMembers, ingestKeys, live sessions
+├── lib/sentinel/
+│   ├── engine.ts        # feature extraction, Isolation Forest scoring, verdicts
+│   ├── isoforest.ts     # Isolation Forest implementation
+│   ├── baselines.ts     # per-user behavioral baselines
+│   ├── geo.ts           # haversine + implied travel speed
+│   └── calibrate.ts     # calibration/sanity harness
+├── pages/
+│   ├── Landing.tsx      # vintage archive-themed landing
+│   ├── Onboarding.tsx   # claim your domain
+│   ├── Dashboard.tsx    # Watch Room (live feed + demo archive)
+│   └── OrgSettings.tsx  # keys, integration snippet, test console, members
+└── components/sentinel/ # RiskDial, SessionTimeline, MemoCard
+```
+
+## 🧩 Integrating from your website
+
+Minimal browser snippet (fire on every login/session start):
+
+```js
+await fetch("https://YOUR-APP-URL/api/ingest", {
+  method: "POST",
+  headers: {
+    Authorization: "Bearer " + INGEST_KEY,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    user: userId,            // your stable user id
+    ts: Date.now(),
+    ip: clientIp,            // from your edge/server
+    city, country,           // optional, from your geoip
+    device: navigator.platform,
+    browser: userAgent,
+    fileDownloads: 0,
+    fileUploads: 0,
+    apiCalls: 1,
+  }),
+})
+  .then((r) => r.json())
+  .then(({ action }) => {
+    if (action === "block") denySession();
+    else if (action === "challenge") requireMfa();
+  });
+```
+
+> Keep the ingest key server-side if you can (edge function / backend proxy).
+> The key only allows *writing* scored events — it cannot read anything.
+
+## 📄 License
+
+MIT — see [LICENSE](./LICENSE).

@@ -91,7 +91,6 @@ function calibrate(anomalyRel: number, evidenceWeight: number): number {
   const blended = 0.25 * anomalyRel + 0.75 * evidenceWeight;
   return Math.round(Math.min(100, Math.max(0, blended * 100)));
 }
-
 function verdictFor(score: number): Verdict {
   if (score < 30) return "allow";
   if (score < 60) return "monitor";
@@ -123,6 +122,80 @@ export function bandFor(score: number): {
   return { label: "Critical", tone: "alarm" };
 }
 
+/**
+ * Everything the scorer needs for one user: their fitted one-class forest
+ * (or null while the archive is still too thin), their baseline, and the
+ * benign history the forest was trained on.
+ */
+export interface UserDetector {
+  forest: IsolationForest | null;
+  maxBenignAnomaly: number;
+  baseline: Baseline;
+  history: SessionLog[];
+}
+
+/**
+ * Minimum benign sessions before the Isolation Forest is trusted for a user.
+ * Below this, scoring is evidence-only and capped at "monitor" — a brand-new
+ * account can look odd without being throttled or blocked by the system.
+ */
+export const MIN_HISTORY_FOR_ENSEMBLE = 5;
+
+/** Fit one user's forest on their benign manifold (no-op below the threshold). */
+export function trainUserDetector(
+  history: SessionLog[],
+  baseline: Baseline,
+): UserDetector {
+  if (history.length < MIN_HISTORY_FOR_ENSEMBLE) {
+    return { forest: null, maxBenignAnomaly: 1, baseline, history };
+  }
+  const X = history.map((s) => extractFeatures(s, baseline, null));
+  const forest = new IsolationForest({ nTrees: 60, sampleSize: 64, seed: 11 }).fit(X);
+  const maxBenignAnomaly = Math.max(...X.map((x) => forest.score(x)), 0.01);
+  return { forest, maxBenignAnomaly, baseline, history };
+}
+
+/**
+ * Score one session against its user's detector.
+ * Warm path: relative forest anomaly blended with rule evidence (0–100).
+ * Cold path: evidence-only, capped at 59 so new users are never auto-blocked.
+ */
+export function scoreSession(
+  s: SessionLog,
+  prev: SessionLog | null,
+  detector: UserDetector,
+): SessionRisk {
+  const b = detector.baseline;
+  const x = extractFeatures(s, b, prev);
+  const factors = attributeFactors(s, b, prev);
+  const evidence = Math.min(1, factors.reduce((a, f) => a + f.weight, 0) / 100);
+
+  let anomaly = 0;
+  let score: number;
+  if (detector.forest) {
+    // Relative anomaly: >1 means “worse than anything in the archive”.
+    anomaly = Math.min(
+      detector.forest.score(x) / detector.maxBenignAnomaly,
+      1.2,
+    );
+    score = calibrate(anomaly, evidence);
+  } else {
+    score = Math.min(59, calibrate(0, evidence * 0.85));
+  }
+
+  const verdict = verdictFor(score);
+  const band = bandFor(score);
+  return {
+    session: s,
+    baseline: b,
+    score,
+    verdict,
+    factors,
+    anomalyVote: anomaly,
+    headline: `${band.label} — ${verdictLabel(verdict)} (${score}/100)`,
+  };
+}
+
 /** Score every session in the sample log archive. */
 export function scoreAllSessions(sessions: SessionLog[]): SessionRisk[] {
   // Train the forest on benign history only (one-class).
@@ -136,43 +209,20 @@ export function scoreAllSessions(sessions: SessionLog[]): SessionRisk[] {
     benignByUser.set(s.user, list);
   }
 
-  // Fit one forest per user on their benign manifold, and record each
-  // user's max benign anomaly so scores become relative to their own norm.
-  const forests = new Map<string, IsolationForest>();
-  const maxBenignAnomaly = new Map<string, number>();
+  const detectors = new Map<string, UserDetector>();
   for (const [user, list] of benignByUser) {
-    const b = baselines.get(user)!;
-    const X = list.map((s) => extractFeatures(s, b, null));
-    const forest = new IsolationForest({ nTrees: 60, sampleSize: 64, seed: 11 }).fit(X);
-    forests.set(user, forest);
-    maxBenignAnomaly.set(user, Math.max(...X.map((x) => forest.score(x)), 0.01));
+    detectors.set(user, trainUserDetector(list, baselines.get(user)!));
   }
 
   return sessions.map((s) => {
-    const b = baselines.get(s.user) ?? baselineFor(baselines, s.user);
-    const prev = previousSessionBefore(sessions, s.user, s.ts);
-    const x = extractFeatures(s, b, prev);
-    const forest = forests.get(s.user);
-    const rawAnomaly = forest ? forest.score(x) : 0;
-    // Relative anomaly: >1 means “worse than anything in the archive”.
-    const anomalyRel = Math.min(rawAnomaly / (maxBenignAnomaly.get(s.user) ?? 1), 1.2);
-    const anomaly = anomalyRel;
-
-    const factors = attributeFactors(s, b, prev);
-    const evidence = Math.min(1, factors.reduce((a, f) => a + f.weight, 0) / 100);
-    const score = calibrate(anomaly, evidence);
-    const verdict = verdictFor(score);
-    const band = bandFor(score);
-
-    return {
-      session: s,
-      baseline: b,
-      score,
-      verdict,
-      factors,
-      anomalyVote: anomaly,
-      headline: `${band.label} — ${verdictLabel(verdict)} (${score}/100)`,
+    const detector = detectors.get(s.user) ?? {
+      forest: null,
+      maxBenignAnomaly: 1,
+      baseline: baselineFor(baselines, s.user),
+      history: [],
     };
+    const prev = previousSessionBefore(sessions, s.user, s.ts);
+    return scoreSession(s, prev, detector);
   });
 }
 

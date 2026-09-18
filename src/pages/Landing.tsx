@@ -272,6 +272,63 @@ export default function Landing() {
 
         <Separator />
 
+        {/* ── For organizations ─────────────────────────────────── */}
+        <section className="py-14">
+          <div className="grid items-center gap-8 lg:grid-cols-[1fr_0.9fr]">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                For Organizations
+              </p>
+              <h2 className="mt-2 font-serif text-3xl font-bold sm:text-4xl">
+                Wire your domain in minutes
+              </h2>
+              <p className="mt-4 max-w-xl font-serif text-base leading-7 text-muted-foreground">
+                Claim your organization's domain with a work email, mint an ingest
+                API key, and stream session events from your login flow, SSO or
+                API gateway. SentinelAI learns each user's normal behavior and
+                scores every new session in real time — returning a verdict your
+                gateway can act on: allow, challenge, or block.
+              </p>
+              <ul className="mt-5 space-y-2 font-mono text-xs text-muted-foreground">
+                <li className="flex gap-2"><span className="text-primary">›</span> One org per email domain — colleagues join automatically</li>
+                <li className="flex gap-2"><span className="text-primary">›</span> Keys stored hashed; full session detail visible to domain admins only</li>
+                <li className="flex gap-2"><span className="text-primary">›</span> LLM analyst writes plain-language incident memos for every case</li>
+              </ul>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button size="lg" asChild className="h-11 px-6 text-base">
+                  <Link to="/onboarding">Claim your domain</Link>
+                </Button>
+              </div>
+            </div>
+            <Card className="texture-paper border-border/70 bg-card/80">
+              <CardHeader className="pb-2">
+                <CardTitle className="font-serif text-lg">Ingest endpoint</CardTitle>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                  POST /api/ingest · Bearer sai_…
+                </p>
+              </CardHeader>
+              <CardContent>
+                <pre className="overflow-x-auto rounded-sm border border-border/60 bg-background/60 p-3 font-mono text-[10px] leading-5 text-muted-foreground">{`curl -X POST https://your-app/api/ingest \\
+  -H "Authorization: Bearer sai_…" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "user": "u_10293",
+    "ip": "203.0.113.9",
+    "city": "Chennai",
+    "device": "MacBook Pro",
+    "fileDownloads": 12,
+    "apiCalls": 640
+  }'`}</pre>
+                <p className="mt-2 font-mono text-[10px] text-muted-foreground">
+                  → {"{ \"score\": 96, \"action\": \"block\" }"}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        <Separator />
+
         {/* ── Final CTA ──────────────────────────────────────────── */}
         <section className="py-16 text-center">
           <motion.div

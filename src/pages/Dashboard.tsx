@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { Link, useNavigate, useSearchParams } from "react-router";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/convex/_generated/api";
 import { useMutation, useQuery, useAction } from "convex/react";
@@ -22,6 +31,7 @@ import {
 import { RiskDial } from "@/components/sentinel/RiskDial";
 import { SessionTimeline } from "@/components/sentinel/SessionTimeline";
 import { MemoCard } from "@/components/sentinel/MemoCard";
+import OrgSettings from "@/pages/OrgSettings";
 import { cn } from "@/lib/utils";
 import {
   baselineSummary,
@@ -32,11 +42,15 @@ import {
 import type { Verdict } from "@/lib/sentinel/types";
 import {
   Archive,
+  Building2,
   Fingerprint,
   Globe2,
   KeyRound,
+  Landmark,
   LogOut,
+  Radio,
   ScrollText,
+  Settings2,
   ShieldAlert,
   ShieldCheck,
   Timer,
@@ -105,20 +119,116 @@ const LADDER_RANGE: Record<Verdict, string> = {
   block: "80–100",
 };
 
+interface LiveSessionRow {
+  sessionId: string;
+  user: string;
+  userLabel?: string;
+  ts: number;
+  score: number;
+  verdict: Verdict;
+  headline: string;
+  anomalyVote: number;
+  downloads: number;
+  apiCalls: number;
+  uploads: number;
+  factors: { code: string; label: string; weight: number; detail: string }[];
+  coldStart: boolean;
+  memo: string | null;
+  memoState?: "pending" | "ready" | "failed";
+  ip: string;
+  city: string;
+  country: string;
+  device: string;
+  browser: string;
+  sensitiveResources: string[];
+  privilegedActions: string[];
+  notes: string[];
+  role: "admin" | "member";
+}
+
+interface OrgLite {
+  orgId: string;
+  name: string;
+  domain: string;
+  role: "admin" | "member";
+}
+
 export default function Dashboard() {
   const { user, signOut } = useAuth();
-  const sessions = useQuery(api.sentinel.listSessions) as
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // ── Org switcher: read ?org=, default to the user's first org ──
+  const myOrgs = useQuery(api.orgs.listMyOrgs) as OrgLite[] | undefined;
+  const activeOrgId = searchParams.get("org");
+  const activeOrg = myOrgs?.find((o) => o.orgId === activeOrgId) ?? null;
+
+  // No ?org= — default to first membership; none → onboarding.
+  useEffect(() => {
+    if (myOrgs === undefined) return;
+    if (!activeOrgId) {
+      if (myOrgs.length > 0) {
+        setSearchParams({ org: myOrgs[0]!.orgId }, { replace: true });
+      }
+      // myOrgs.length === 0 → show onboarding prompt inline.
+    } else if (myOrgs.length > 0 && !myOrgs.some((o) => o.orgId === activeOrgId)) {
+      setSearchParams({ org: myOrgs[0]!.orgId }, { replace: true });
+    }
+  }, [myOrgs, activeOrgId, setSearchParams]);
+
+  const [mode, setMode] = useState<"live" | "demo" | "settings">("live");
+
+  // ── Demo archive data (always fetched; cheap and cached) ──────
+  const demoSessions = useQuery(api.sentinel.listSessions) as
     | SessionSummary[]
     | undefined;
-  const watchlist = useQuery(api.sentinel.listUsers) as
+  const demoWatchlist = useQuery(api.sentinel.listUsers) as
     | { user: string; maxScore: number; sessions: number }[]
     | undefined;
   const allCases = useQuery(api.sentinel.listCases) as
     | CaseRecordShape[]
     | undefined;
 
+  // ── Live tenant data (only when an org is active) ─────────────
+  const liveSessions = useQuery(
+    api.orgs.listLiveSessions,
+    activeOrgId ? ({ orgId: activeOrgId } as never) : "skip",
+  ) as LiveSessionRow[] | undefined;
+  const liveWatchlist = useQuery(
+    api.orgs.listLiveUsers,
+    activeOrgId ? ({ orgId: activeOrgId } as never) : "skip",
+  ) as { user: string; maxScore: number; sessions: number }[] | undefined;
+
+  const isLive = mode === "live" && activeOrg !== null;
+
+  const sessions: SessionSummary[] | undefined = isLive
+    ? liveSessions?.map((r) => ({
+        sessionId: r.sessionId,
+        user: r.userLabel ?? r.user,
+        ts: r.ts,
+        ip: r.ip,
+        city: r.city,
+        country: r.country,
+        device: r.device,
+        browser: r.browser,
+        score: r.score,
+        verdict: r.verdict,
+        headline: r.headline,
+        anomalyVote: r.anomalyVote,
+        downloads: r.downloads,
+        apiCalls: r.apiCalls,
+        attackStory: false,
+      }))
+    : demoSessions;
+  const watchlist = isLive ? liveWatchlist : demoWatchlist;
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [blockOpen, setBlockOpen] = useState(false);
+
+  // Reset selection when switching org or mode.
+  useEffect(() => {
+    setSelectedId(null);
+  }, [activeOrgId, mode]);
 
   // Default to the live incident so the demo opens on the attack story.
   useEffect(() => {
@@ -128,20 +238,31 @@ export default function Dashboard() {
     }
   }, [sessions, selectedId]);
 
-  const dossier = useQuery(
+  // Dossier: live sessions query their own table; demo archive uses the demo query.
+  const liveDossier = useQuery(
+    api.orgs.getLiveSession,
+    selectedId && isLive ? ({ sessionId: selectedId } as never) : "skip",
+  ) as LiveSessionRow | undefined;
+  const demoDossier = useQuery(
     api.sentinel.getSession,
-    selectedId ? { sessionId: selectedId } : "skip",
+    selectedId && !isLive ? { sessionId: selectedId } : "skip",
   ) as Dossier | undefined;
+  const dossier: Dossier | undefined = isLive
+    ? (liveDossier as unknown as Dossier | undefined)
+    : demoDossier;
 
   const recordCase = useMutation(api.sentinel.recordCase);
   const blockUser = useMutation(api.sentinel.blockUser);
+  const blockLiveUser = useMutation(api.orgs.blockLiveUser);
   const markReviewed = useMutation(api.sentinel.markReviewed);
+  const markLiveReviewed = useMutation(api.orgs.markLiveReviewed);
   const explainCase = useAction(api.sentinel.explainCase);
+  const explainLiveCase = useAction(api.orgs.explainLiveCase);
 
-  // Open a case file the first time a dossier is viewed (idempotent).
+  // Open a case file the first time a demo dossier is viewed (idempotent).
   const recordedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!dossier) return;
+    if (!dossier || isLive) return;
     const known =
       allCases?.some((c) => c.sessionId === dossier.sessionId) ?? false;
     if (known || recordedRef.current.has(dossier.sessionId)) return;
@@ -165,12 +286,19 @@ export default function Dashboard() {
   );
   const caseFor = allCases?.find((c) => c.sessionId === selectedId);
   const vs = dossier ? verdictStyle(dossier.verdict) : null;
+  const liveModeActive = isLive && dossier !== undefined;
+  const liveRole: "admin" | "member" | null =
+    isLive ? (liveDossier?.role ?? liveSessions?.[0]?.role ?? null) : null;
 
   const handleBlock = async () => {
     if (!dossier) return;
     setBlockOpen(false);
     try {
-      await blockUser({ sessionId: dossier.sessionId, user: dossier.user });
+      if (liveModeActive) {
+        await blockLiveUser({ sessionId: dossier.sessionId } as never);
+      } else {
+        await blockUser({ sessionId: dossier.sessionId, user: dossier.user });
+      }
       toast("Account blocked", {
         description: `${dossier.user} has been revoked and the SOC has been alerted.`,
       });
@@ -182,7 +310,11 @@ export default function Dashboard() {
   const handleReview = async () => {
     if (!dossier) return;
     try {
-      await markReviewed({ sessionId: dossier.sessionId });
+      if (liveModeActive) {
+        await markLiveReviewed({ sessionId: dossier.sessionId } as never);
+      } else {
+        await markReviewed({ sessionId: dossier.sessionId });
+      }
       toast("Case marked reviewed", {
         description: "Filed to the archive without a block.",
       });
@@ -193,6 +325,9 @@ export default function Dashboard() {
 
   const handleSummon = async (): Promise<string> => {
     if (!dossier) throw new Error("No dossier loaded.");
+    if (liveModeActive) {
+      return explainLiveCase({ sessionId: dossier.sessionId } as never);
+    }
     return explainCase({
       sessionId: dossier.sessionId,
       user: dossier.user,
@@ -238,7 +373,52 @@ export default function Dashboard() {
               SentinelAI <span className="text-primary">Watch Room</span>
             </h1>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Org switcher */}
+            {myOrgs !== undefined && myOrgs.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2">
+                    <Building2 className="size-3.5" />
+                    {activeOrg ? activeOrg.name : "Switch domain"}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="texture-paper bg-card">
+                  <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                    Your domains
+                  </DropdownMenuLabel>
+                  {myOrgs.map((o) => (
+                    <DropdownMenuItem
+                      key={o.orgId}
+                      onClick={() => setSearchParams({ org: o.orgId })}
+                      className={cn(o.orgId === activeOrgId && "bg-accent/20")}
+                    >
+                      <Building2 className="mr-2 size-3.5 text-primary" />
+                      <span className="font-serif">{o.name}</span>
+                      <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+                        {o.domain} · {o.role}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => navigate("/onboarding")}>
+                    <Landmark className="mr-2 size-3.5 text-primary" />
+                    Claim another domain
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {activeOrg && (
+              <Button
+                variant={mode === "settings" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMode(mode === "settings" ? "live" : "settings")}
+                className="gap-2"
+              >
+                <Settings2 className="size-3.5" />
+                Domain
+              </Button>
+            )}
             <div className="text-right">
               <p className="font-serif text-sm font-semibold text-foreground">
                 {user?.name ?? "Analyst on Duty"}
@@ -263,7 +443,44 @@ export default function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+        {/* Domain settings view */}
+        {mode === "settings" && activeOrgId ? (
+          <OrgSettings orgId={activeOrgId} />
+        ) : (
+        <>
         {/* ── Watchlist strip ────────────────────────────────────── */}
+        {/* ── Mode bar ─────────────────────────────────────── */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-1 rounded-sm border border-border bg-card/70 p-1">
+            {(["live", "demo"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                disabled={m === "live" && activeOrg === null}
+                className={cn(
+                  "px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest transition-colors",
+                  mode === m
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                  m === "live" && activeOrg === null && "cursor-not-allowed opacity-40",
+                )}
+              >
+                {m === "live"
+                  ? activeOrg === null
+                    ? "Live feed — claim a domain"
+                    : "Live domain feed"
+                  : "Demo archive"}
+              </button>
+            ))}
+          </div>
+          {isLive && (
+            <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              {liveRole === "member"
+                ? "Member view — IPs, devices & resources redacted"
+                : "Admin view — full session detail"}
+            </p>
+          )}
+        </div>
         <section className="mb-6 grid gap-3 sm:grid-cols-3">
           {(watchlist ?? []).map((w) => (
             <Card
@@ -610,6 +827,8 @@ export default function Dashboard() {
             </motion.div>
           )}
         </div>
+        </>
+        )}
       </main>
     </div>
   );
