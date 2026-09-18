@@ -110,29 +110,53 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="texture-paper vignette flex min-h-screen flex-col bg-background">
 
-      
+      {/* Bureau masthead */}
+      <header className="border-b border-border/70 bg-card/60">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
+          <button
+            className="flex items-center gap-3 text-left"
+            onClick={() => navigate("/")}
+          >
+            <span className="flex size-9 items-center justify-center rounded-sm border-2 border-primary/60 bg-primary/10 font-serif text-lg font-bold text-primary">
+              S
+            </span>
+            <span>
+              <span className="block font-serif text-lg font-bold leading-none tracking-wide">
+                SentinelAI
+              </span>
+              <span className="block font-mono text-[9px] uppercase tracking-[0.3em] text-muted-foreground">
+                Behavioral Security Bureau
+              </span>
+            </span>
+          </button>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Analyst Registry · Est. MMXXVI
+          </p>
+        </div>
+      </header>
+
       {/* Auth Content */}
-      <div className="flex-1 flex items-center justify-center">
-        <div className="flex items-center justify-center h-full flex-col">
-        <Card className="min-w-[350px] pb-0 border shadow-md">
+      <div className="flex flex-1 items-center justify-center px-4 py-10">
+        <div className="flex h-full flex-col items-center justify-center">
+        <Card className="texture-paper deckle min-w-[350px] border-border bg-card/90 pb-0 shadow-md">
           {step === "signIn" ? (
             <>
               <CardHeader className="text-center">
               <div className="flex justify-center">
                     <img
                       src={logo}
-                      alt="Lock Icon"
-                      width={64}
-                      height={64}
-                      className="rounded-lg mb-4 mt-4 cursor-pointer"
+                      alt="SentinelAI seal"
+                      width={56}
+                      height={56}
+                      className="mb-4 mt-4 cursor-pointer rounded-full border-2 border-primary/50 bg-background/60 p-1.5 transition-transform hover:scale-105"
                       onClick={() => navigate("/")}
                     />
                   </div>
-                <CardTitle className="text-xl">Get Started</CardTitle>
-                <CardDescription>
-                  Enter your email to log in or sign up
+                <CardTitle className="font-serif text-2xl">Analyst Registry</CardTitle>
+                <CardDescription className="font-serif italic">
+                  Present your credentials to enter the Watch Room
                 </CardDescription>
               </CardHeader>
               <form onSubmit={handleEmailSubmit}>
@@ -196,9 +220,9 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
           ) : (
             <>
               <CardHeader className="text-center mt-4">
-                <CardTitle>Check your email</CardTitle>
-                <CardDescription>
-                  We've sent a code to {step.email}
+                <CardTitle className="font-serif text-2xl">Verification Slip</CardTitle>
+                <CardDescription className="font-serif italic">
+                  A six-digit code has been filed to {step.email}
                 </CardDescription>
               </CardHeader>
               <form onSubmit={handleOtpSubmit}>
@@ -277,7 +301,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
             </>
           )}
 
-          <div className="py-4 px-6 text-xs text-center text-muted-foreground bg-muted border-t rounded-b-lg">
+          <div className="rounded-b-lg border-t bg-muted/70 px-6 py-4 text-center font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
             Secured by{" "}
             <a
               href="https://freebuff.com"
