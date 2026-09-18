@@ -1,6 +1,74 @@
 import type { Baseline, SessionLog } from "./types";
 import { haversineKm, impliedSpeedKmh } from "./geo";
 
+/** Home-timezone descriptor used to evaluate login hours in the user's own clock. */
+export interface TzInfo {
+  label: string;
+  offset: number;
+}
+
+/**
+ * Build one user's baseline from their benign history alone. Used by both the
+ * demo archive and the live multi-tenant ingestion path. Safe on empty
+ * history — returns an "unknown" archive that suppresses hour evidence.
+ */
+export function buildBaseline(history: SessionLog[], tz: TzInfo): Baseline {
+  const sorted = [...history].sort((a, b) => a.ts - b.ts);
+  if (sorted.length === 0) {
+    return {
+      user: "",
+      homeCity: "unknown",
+      homeCountry: "unknown",
+      lat: 0,
+      lon: 0,
+      homeTzLabel: tz.label,
+      homeTzOffset: tz.offset,
+      loginHourStart: 0,
+      loginHourEnd: 24,
+      devices: [],
+      ips: [],
+      downloadsMin: 0,
+      downloadsMax: 0,
+      apiCallsMin: 0,
+      apiCallsMax: 0,
+      familiarResources: [],
+      familiarActions: [],
+      sessionsScored: 0,
+      lastActiveTs: 0,
+    };
+  }
+  const localHours = sorted.map((s) => {
+    const d = new Date(s.ts);
+    return d.getUTCHours() + d.getUTCMinutes() / 60 + tz.offset;
+  });
+  const devices = [...new Set(sorted.map((s) => `${s.device} — ${s.browser}`))];
+  const ips = [...new Set(sorted.map((s) => s.ip))];
+  const resources = [...new Set(sorted.flatMap((s) => s.sensitiveResources))];
+  const actions = [...new Set(sorted.flatMap((s) => s.privilegedActions))];
+  const home = sorted[0]!;
+  return {
+    user: sorted[0]!.user,
+    homeCity: home.city,
+    homeCountry: home.country,
+    lat: home.lat,
+    lon: home.lon,
+    homeTzLabel: tz.label,
+    homeTzOffset: tz.offset,
+    loginHourStart: Math.min(...localHours),
+    loginHourEnd: Math.max(...localHours),
+    devices,
+    ips,
+    downloadsMin: Math.min(...sorted.map((s) => s.fileDownloads)),
+    downloadsMax: Math.max(...sorted.map((s) => s.fileDownloads)),
+    apiCallsMin: Math.min(...sorted.map((s) => s.apiCalls)),
+    apiCallsMax: Math.max(...sorted.map((s) => s.apiCalls)),
+    familiarResources: resources,
+    familiarActions: actions,
+    sessionsScored: sorted.length,
+    lastActiveTs: sorted[sorted.length - 1]!.ts,
+  };
+}
+
 /**
  * Baseline = the "case archive" for one user: everything SentinelAI has on
  * file about their normal behavior. Built from benign history only —
@@ -17,37 +85,12 @@ export function buildBaselines(sessions: SessionLog[]): Map<string, Baseline> {
 
   const baselines = new Map<string, Baseline>();
   for (const [user, list] of byUser) {
-    const sorted = [...list].sort((a, b) => a.ts - b.ts);
-    const localHours = sorted.map((s) => {
-      const d = new Date(s.ts);
-      return d.getUTCHours() + d.getUTCMinutes() / 60 + TZ_OFFSETS.get(user)!;
+    const baseline = buildBaseline(list, {
+      label: TZ_LABELS.get(user) ?? "UTC",
+      offset: TZ_OFFSETS.get(user) ?? 0,
     });
-    const devices = [...new Set(sorted.map((s) => `${s.device} — ${s.browser}`))];
-    const ips = [...new Set(sorted.map((s) => s.ip))];
-    const resources = [...new Set(sorted.flatMap((s) => s.sensitiveResources))];
-    const actions = [...new Set(sorted.flatMap((s) => s.privilegedActions))];
-    const home = sorted[0]!;
-    baselines.set(user, {
-      user,
-      homeCity: home.city,
-      homeCountry: home.country,
-      lat: home.lat,
-      lon: home.lon,
-      homeTzLabel: TZ_LABELS.get(user)!,
-      homeTzOffset: TZ_OFFSETS.get(user)!,
-      loginHourStart: Math.min(...localHours),
-      loginHourEnd: Math.max(...localHours),
-      devices,
-      ips,
-      downloadsMin: Math.min(...sorted.map((s) => s.fileDownloads)),
-      downloadsMax: Math.max(...sorted.map((s) => s.fileDownloads)),
-      apiCallsMin: Math.min(...sorted.map((s) => s.apiCalls)),
-      apiCallsMax: Math.max(...sorted.map((s) => s.apiCalls)),
-      familiarResources: resources,
-      familiarActions: actions,
-      sessionsScored: sorted.length,
-      lastActiveTs: sorted[sorted.length - 1]!.ts,
-    });
+    baseline.user = user;
+    baselines.set(user, baseline);
   }
   return baselines;
 }
